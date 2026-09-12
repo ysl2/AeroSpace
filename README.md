@@ -13,6 +13,12 @@ Docs:
 - [AeroSpace Commands](https://nikitabobko.github.io/AeroSpace/commands)
 - [AeroSpace Goodies](https://nikitabobko.github.io/AeroSpace/goodies)
 
+## Install from source
+
+```bash
+PATH="$HOME/.rbenv/versions/3.3.4/bin:/opt/homebrew/opt/rustup/bin:$PATH" ./install-from-sources.sh
+```
+
 ## Key features
 
 - Tiling window manager based on a [tree paradigm](https://nikitabobko.github.io/AeroSpace/guide#tree)

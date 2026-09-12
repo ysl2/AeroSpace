@@ -3,7 +3,7 @@ cd "$(dirname "$0")"
 source ./script/setup.sh
 
 build_version="0.0.0-SNAPSHOT"
-codesign_identity="aerospace-codesign-certificate"
+codesign_identity="-"
 while test $# -gt 0; do
     case $1 in
         --build-version) build_version="$2"; shift 2;;
@@ -19,37 +19,30 @@ done
 ./build-docs.sh --release
 ./build-shell-completion.sh
 
-./generate.sh
+./generate.sh --ignore-xcodeproj
 ./script/check-uncommitted-files.sh
-./generate.sh --build-version "$build_version" --codesign-identity "$codesign_identity" --generate-git-hash
+./generate.sh --build-version "$build_version" --generate-git-hash --ignore-xcodeproj
 
-swift build -c release --arch arm64 --arch x86_64 --product aerospace -Xswiftc -warnings-as-errors # CLI
-
-# todo: make xcodebuild use the same toolchain as swift
-# toolchain="$(plutil -extract CFBundleIdentifier raw ~/Library/Developer/Toolchains/swift-6.1-RELEASE.xctoolchain/Info.plist)"
-# xcodebuild -toolchain "$toolchain" \
-# Unfortunately, Xcode 16 fails with:
-#     2025-05-05 15:51:15.618 xcodebuild[4633:13690815] Writing error result bundle to /var/folders/s1/17k6s3xd7nb5mv42nx0sd0800000gn/T/ResultBundle_2025-05-05_15-51-0015.xcresult
-#     xcodebuild: error: Could not resolve package dependencies:
-#       <unknown>:0: warning: legacy driver is now deprecated; consider avoiding specifying '-disallow-use-new-driver'
-#     <unknown>:0: error: unable to execute command: <unknown>
+swift build -c release -Xswiftc -warnings-as-errors
 
 rm -rf .release && mkdir .release
 
-cd ./xcode
-    xcode_configuration="Release"
-    xcodebuild -version
-    xcodebuild-pretty ../.release/xcodebuild.log clean build \
-        -scheme AeroSpace \
-        -destination "generic/platform=macOS" \
-        -configuration "$xcode_configuration" \
-        -derivedDataPath .xcode-build
-cd -
+app_contents=".release/AeroSpace.app/Contents"
+mkdir -p "$app_contents/MacOS" "$app_contents/Resources"
+cp .build/release/AeroSpaceApp "$app_contents/MacOS/AeroSpace"
+cp .build/release/aerospace .release
+cp docs/config-examples/default-config.toml "$app_contents/Resources"
+
+plist="$app_contents/Info.plist"
+/usr/bin/plutil -create xml1 "$plist"
+/usr/bin/plutil -insert CFBundleExecutable -string AeroSpace "$plist"
+/usr/bin/plutil -insert CFBundleIdentifier -string bobko.aerospace "$plist"
+/usr/bin/plutil -insert CFBundlePackageType -string APPL "$plist"
+/usr/bin/plutil -insert LSUIElement -bool YES "$plist"
+
+/usr/bin/codesign --force --sign "$codesign_identity" .release/AeroSpace.app
 
 git checkout .
-
-cp -r "xcode/.xcode-build/Build/Products/$xcode_configuration/AeroSpace.app" .release
-cp -r .build/apple/Products/Release/aerospace .release
 
 ################
 ### SIGN CLI ###
@@ -61,35 +54,6 @@ codesign -s "$codesign_identity" .release/aerospace
 ### VALIDATE ###
 ################
 
-expected_layout=$(cat <<EOF
-.release/AeroSpace.app
-.release/AeroSpace.app/Contents
-.release/AeroSpace.app/Contents/_CodeSignature
-.release/AeroSpace.app/Contents/_CodeSignature/CodeResources
-.release/AeroSpace.app/Contents/MacOS
-.release/AeroSpace.app/Contents/MacOS/AeroSpace
-.release/AeroSpace.app/Contents/Resources
-.release/AeroSpace.app/Contents/Resources/default-config.toml
-.release/AeroSpace.app/Contents/Resources/AppIcon.icns
-.release/AeroSpace.app/Contents/Resources/Assets.car
-.release/AeroSpace.app/Contents/Info.plist
-.release/AeroSpace.app/Contents/PkgInfo
-EOF
-)
-
-if test "$expected_layout" != "$(find .release/AeroSpace.app)"; then
-    echo "!!! Expect/Actual layout don't match !!!"
-    find .release/AeroSpace.app
-    exit 1
-fi
-
-check-universal-binary() {
-    if ! file "$1" | grep --fixed-string -q "Mach-O universal binary with 2 architectures: [x86_64:Mach-O 64-bit executable x86_64] [arm64"; then
-        echo "$1 is not a universal binary"
-        exit 1
-    fi
-}
-
 check-contains-hash() {
     hash=$(git rev-parse HEAD)
     if ! strings "$1" | grep --fixed-string "$hash" > /dev/null; then
@@ -97,9 +61,6 @@ check-contains-hash() {
         exit 1
     fi
 }
-
-check-universal-binary .release/AeroSpace.app/Contents/MacOS/AeroSpace
-check-universal-binary .release/aerospace
 
 check-contains-hash .release/AeroSpace.app/Contents/MacOS/AeroSpace
 check-contains-hash .release/aerospace
